@@ -1,0 +1,634 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Recorder Measurement</title>
+<!--
+  Recorder measurement page — isolated test harness.
+
+  PURPOSE: measure what the app's recorder actually produces on a real device,
+  so a later synthetic test payload can be given a representative size.
+  This is a RECORDING measurement. It is not an upload test.
+
+  PROVENANCE: the two recorder profiles below are transcribed from application
+  source at revision b5fe49566b647cd5e9d22fd164a615eefd1a534b (2026-09-21).
+  They MATCH THAT SOURCE REVISION. That is a claim about the code, not about
+  production behaviour: nothing here independently verifies how the deployed
+  application behaves.
+
+  WHAT THIS PAGE DOES NOT DO, by construction:
+    - no upload, and no network request of any kind: no fetch, no
+      XMLHttpRequest, no sendBeacon, no WebSocket, no external script, font
+      or stylesheet;
+    - no server integration call, no transcription, no student data;
+    - no automatic download, and no download affordance at all;
+    - no localStorage and no sessionStorage: the clip and the run log live in
+      page memory only, and a reload discards both;
+    - it invokes NO application callback. In the application, the recorder's
+      onstop handler calls a completion callback, and that callback is what
+      drives upload and round completion. Nothing of that kind exists here:
+      onstop builds a Blob, updates the display, and stops.
+
+  No bitrate is set and no codec is forced, because the source sets neither.
+  The resulting format is read back off the live MediaRecorder; it is never
+  inferred from what was requested.
+-->
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#fff; --ink:#15181d; --muted:#5b636e; --line:#dfe3e8;
+    --accent:#1f6feb; --warn:#9a5b00; --bad:#b3261e;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --bg:#0e1116; --card:#161b22; --ink:#e6edf3; --muted:#9aa4b2; --line:#2a313a;
+      --accent:#589bff; --warn:#d29922; --bad:#f85149;
+    }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:var(--bg); color:var(--ink); padding:16px;
+    font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    -webkit-text-size-adjust:100%;
+  }
+  main{max-width:720px;margin:0 auto}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:14px;margin:0 0 16px}
+  section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+  h2{font-size:15px;margin:0 0 10px}
+  .timer{font:600 44px/1 var(--mono);text-align:center;margin:8px 0 4px;font-variant-numeric:tabular-nums}
+  .state{text-align:center;color:var(--muted);font-size:14px;margin-bottom:12px;min-height:1.5em}
+  .row{display:flex;gap:10px;flex-wrap:wrap}
+  button{
+    flex:1 1 140px;min-height:52px;font-size:16px;font-weight:600;border-radius:10px;
+    border:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer;
+    -webkit-appearance:none;appearance:none;
+  }
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.danger{color:var(--bad)}
+  button:disabled{opacity:.42;cursor:default}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  td{padding:7px 0;border-bottom:1px solid var(--line);vertical-align:top}
+  td:first-child{color:var(--muted);padding-right:12px;width:47%}
+  td:last-child{font-family:var(--mono);word-break:break-all}
+  tr:last-child td{border-bottom:none}
+  .note{font-size:13px;color:var(--muted);margin-top:10px}
+  .flag{font-size:13px;border-radius:8px;padding:9px 11px;margin-top:10px}
+  .flag.warn{background:rgba(210,153,34,.13);color:var(--warn)}
+  .flag.bad{background:rgba(179,38,30,.11);color:var(--bad)}
+  label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+  input,select,textarea{
+    width:100%;padding:11px;font-size:16px;border:1px solid var(--line);border-radius:9px;
+    background:var(--bg);color:var(--ink);font-family:inherit;-webkit-appearance:none;appearance:none;
+  }
+  textarea{font-family:var(--mono);font-size:12px;min-height:220px;white-space:pre}
+  audio{width:100%;margin-top:10px}
+  .pill{display:inline-block;font-size:12px;padding:2px 8px;border-radius:999px;background:var(--bg);border:1px solid var(--line);color:var(--muted)}
+  .derived td:first-child::after{content:" (derived)";color:var(--muted);font-size:11px}
+  .prov{font-size:12px;color:var(--muted);font-family:var(--mono);word-break:break-all}
+</style>
+</head>
+<body>
+<main>
+  <h1>Recorder measurement</h1>
+  <p class="sub">Measures what the recorder actually produces on this device.
+  Nothing is uploaded, downloaded or stored. <strong>Your speech never leaves the device.</strong></p>
+
+  <section>
+    <h2>1 · This run</h2>
+    <label for="profile">Recorder profile</label>
+    <select id="profile">
+      <option value="B" selected>Live Conversation recorder settings — standalone microphone approximation</option>
+      <option value="A">Speaking-task recorder settings (separate recorder — optional)</option>
+    </select>
+    <p class="note" id="profileNote"></p>
+
+    <label for="device">Device model — type it exactly (e.g. iPad 10th gen, iPhone 14)</label>
+    <input id="device" placeholder="iPad 10th gen" autocomplete="off">
+
+    <label for="osver">iPadOS / iOS version (Settings › General › About › Software Version)</label>
+    <input id="osver" placeholder="17.5.1" autocomplete="off">
+
+    <label for="browser">Browser (the one students normally use)</label>
+    <input id="browser" placeholder="Safari" autocomplete="off">
+
+    <p class="note"><strong>Fill these in before you press Start.</strong> They are
+    recorded the moment a recording begins, and later edits apply only to the
+    <em>next</em> run — so typing the next device's name can never alter a run
+    already measured. Run each device separately; do not assume an iPad and an
+    iPhone produce the same format or size.</p>
+    <div class="row">
+      <button id="applyLast" disabled>Correct the last run's device details</button>
+    </div>
+    <p class="note">Use that only to fix a typo in the run you just finished.</p>
+  </section>
+
+  <section>
+    <h2>2 · Record about three minutes of your own speech</h2>
+    <div class="timer" id="timer">00:00</div>
+    <div class="state" id="state">Ready.</div>
+    <div class="row">
+      <button id="start" class="primary">Start</button>
+      <button id="stop" disabled>Stop</button>
+    </div>
+    <p class="note">Talk normally for roughly three minutes — read anything aloud.
+    Three minutes is this test's sample length, chosen so a rate can be measured.
+    It is not a proposed limit on anything.</p>
+    <div id="capFlags"></div>
+  </section>
+
+  <section>
+    <h2>3 · Measurement</h2>
+    <table id="results"><tbody>
+      <tr><td>Status</td><td id="r_status">no recording yet</td></tr>
+    </tbody></table>
+    <div id="playbackWrap"></div>
+    <div class="row" style="margin-top:12px">
+      <button id="clear" class="danger" disabled>Clear recording</button>
+    </div>
+    <p class="note">Clear revokes the playback URL and drops the clip from memory.
+    The measurement numbers stay in the run log below.</p>
+  </section>
+
+  <section>
+    <h2>4 · Report <span class="pill" id="runCount">0 runs</span></h2>
+    <textarea id="report" readonly spellcheck="false"></textarea>
+    <div class="row" style="margin-top:10px">
+      <button id="copy">Copy report</button>
+      <button id="resetLog" class="danger">Reset run log</button>
+    </div>
+    <p class="note">Text only — never audio. Each run is kept separate.
+    Reloading the page clears everything; copy before you leave.</p>
+  </section>
+
+  <section>
+    <h2>Provenance and limits</h2>
+    <p class="note">Both profiles are transcribed from application source at revision</p>
+    <p class="prov">b5fe49566b647cd5e9d22fd164a615eefd1a534b &nbsp;(2026-09-21)</p>
+    <p class="note">
+      They <strong>match that source revision</strong>. That is a statement about the
+      code, not about the deployed application: this page does not independently
+      verify production behaviour.
+    </p>
+    <p class="note">
+      The Live Conversation profile matches that recorder's <strong>candidate order,
+      MediaRecorder options, unsupported-format refusal and its <code>start()</code> with no
+      timeslice</strong> — but not its audio source. That recorder wraps a live room's
+      already-published call track; this page uses a standalone microphone, which no
+      page can substitute for the real thing. A size measured here is therefore
+      <strong>indicative of that recorder's settings, not equivalent to the live-room
+      track</strong>, and it does not replace a real classroom test.
+    </p>
+  </section>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ──────────────────────────────────────────────────────────────────────────
+     Recorder profiles, transcribed from application source at revision
+     b5fe49566b647cd5e9d22fd164a615eefd1a534b.
+     ────────────────────────────────────────────────────────────────────────── */
+
+  // Live Conversation capture candidate list, in source order.
+  var LIVE_CANDIDATES = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4",
+    "audio/ogg;codecs=opus"
+  ];
+
+  // Speaking-task recorder candidate list, in source order.
+  var SPEAKING_CANDIDATES = [
+    "audio/mp4;codecs=mp4a.40.2",
+    "audio/mp4",
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/ogg;codecs=opus",
+    "audio/ogg"
+  ];
+
+  /* Live Conversation selection. Returns null when nothing is supported, and a
+     throwing isTypeSupported counts as unsupported. */
+  function pickLiveMime(candidates) {
+    var list = Array.isArray(candidates) ? candidates : [];
+    for (var i = 0; i < list.length; i++) {
+      try { if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(list[i])) return list[i]; }
+      catch (e) { /* treat as unsupported */ }
+    }
+    return null;
+  }
+
+  /* Speaking-task selection. Returns "" when nothing is supported, which the
+     caller turns into "pass no mimeType and let the browser choose". */
+  function pickSpeakingMime(candidates) {
+    if (typeof MediaRecorder === "undefined") return null;
+    for (var i = 0; i < candidates.length; i++) {
+      if (MediaRecorder.isTypeSupported(candidates[i])) return candidates[i];
+    }
+    return "";
+  }
+
+  var PROFILES = {
+    B: {
+      key: "B",
+      label: "Live Conversation recorder settings — standalone microphone approximation",
+      candidates: LIVE_CANDIDATES,
+      timeslice: null,                 // source calls recorder.start()
+      refuseWhenUnsupported: true,     // source reports "unsupported" and records nothing
+      alwaysPassMimeType: true,        // source passes { mimeType: mime } unconditionally
+      sourceNote:
+        "Matches the Live Conversation capture recorder's candidate order, its " +
+        "{ mimeType } option, its refusal to record when no candidate is supported, " +
+        "and start() with no timeslice. It does NOT match its audio source: that " +
+        "recorder wraps the live room's already-published call track, which this " +
+        "page cannot reproduce. Size measured here is indicative, not equivalent."
+    },
+    A: {
+      key: "A",
+      label: "Speaking-task recorder settings (separate recorder — optional)",
+      candidates: SPEAKING_CANDIDATES,
+      timeslice: 250,                  // source calls recorder.start(250)
+      refuseWhenUnsupported: false,    // source passes {} and lets the browser choose
+      alwaysPassMimeType: false,
+      sourceNote:
+        "A DIFFERENT recorder from the one Live Conversation uses: the speaking-task " +
+        "recorder. Its own microphone stream, its own candidate order (mp4/AAC first), " +
+        "options = { mimeType } only when a candidate is supported, and start(250). " +
+        "Included for comparison; it is not the Live Conversation path."
+    }
+  };
+
+  var SOURCE_REVISION = "b5fe49566b647cd5e9d22fd164a615eefd1a534b";
+  var SOURCE_DATE = "2026-09-21";
+
+  /* ── Elements ──────────────────────────────────────────────────────────── */
+  var $ = function (id) { return document.getElementById(id); };
+  var elTimer = $("timer"), elState = $("state"), elResults = $("results").tBodies[0];
+  var elStart = $("start"), elStop = $("stop"), elClear = $("clear");
+  var elReport = $("report"), elRunCount = $("runCount"), elCapFlags = $("capFlags");
+  var elPlayback = $("playbackWrap"), elProfile = $("profile"), elProfileNote = $("profileNote");
+
+  /* ── State (memory only) ───────────────────────────────────────────────── */
+  var stream = null, recorder = null, chunks = [], blob = null, blobUrl = null;
+  var tStart = 0, tick = null, runs = [], current = null;
+
+  // The device fields are SNAPSHOT WHEN RECORDING STARTS and never re-read
+  // afterwards. An earlier version let edits flow into "the last run", which
+  // silently rewrote the previous run's device the moment the operator typed
+  // the NEXT device's name — the runs stopped being separate measurements.
+  // Correcting a completed run is now a deliberate button, never a side effect
+  // of typing.
+  function readDeviceFields() {
+    return {
+      device: $("device").value.trim(),
+      osver: $("osver").value.trim(),
+      browser: $("browser").value.trim()
+    };
+  }
+
+  function fmt(sec) {
+    var m = Math.floor(sec / 60), s = sec % 60;
+    return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+  }
+  function esc(v) { return (v === null || v === undefined || v === "") ? "—" : String(v); }
+  function row(k, v, cls) {
+    var tr = document.createElement("tr");
+    if (cls) tr.className = cls;
+    var a = document.createElement("td"), b = document.createElement("td");
+    a.textContent = k; b.textContent = esc(v);
+    tr.appendChild(a); tr.appendChild(b); elResults.appendChild(tr);
+  }
+  function flag(kind, msg) {
+    var d = document.createElement("div");
+    d.className = "flag " + kind; d.textContent = msg;
+    elCapFlags.appendChild(d);
+  }
+
+  function describeSupport(candidates) {
+    if (typeof MediaRecorder === "undefined") return "MediaRecorder is not available";
+    var out = [];
+    for (var i = 0; i < candidates.length; i++) {
+      var ok = false;
+      try { ok = !!(MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(candidates[i])); }
+      catch (e) { ok = false; }
+      out.push((ok ? "yes  " : "no   ") + candidates[i]);
+    }
+    return out.join("\n");
+  }
+
+  function refreshProfile() {
+    var p = PROFILES[elProfile.value];
+    elProfileNote.textContent = p.sourceNote;
+    elCapFlags.innerHTML = "";
+    if (typeof MediaRecorder === "undefined") {
+      flag("bad", "This browser has no MediaRecorder. Recording is not possible here.");
+      elStart.disabled = true; return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      flag("bad", "No microphone API. This usually means the page is not in a secure (HTTPS) context.");
+      elStart.disabled = true; return;
+    }
+    if (p.refuseWhenUnsupported && pickLiveMime(p.candidates) === null) {
+      flag("bad", "No candidate format is supported here. The Live Conversation recorder " +
+                  "REFUSES to record in this situation rather than falling back, so this " +
+                  "page refuses too — that refusal is itself the measurement.");
+      elStart.disabled = true; return;
+    }
+    if (!p.refuseWhenUnsupported && pickSpeakingMime(p.candidates) === "") {
+      flag("warn", "No candidate format is supported. This recorder passes no mimeType at " +
+                   "all and lets the browser choose, so this page does the same.");
+    }
+    elStart.disabled = false;
+  }
+  elProfile.addEventListener("change", refreshProfile);
+
+  /* ── Start ─────────────────────────────────────────────────────────────── */
+  elStart.addEventListener("click", function () {
+    var p = PROFILES[elProfile.value];
+    elCapFlags.innerHTML = "";
+
+    // The Live Conversation recorder decides the format BEFORE it touches a
+    // stream, and refuses outright when nothing is supported.
+    var requested, options;
+    if (p.refuseWhenUnsupported) {
+      requested = pickLiveMime(p.candidates);
+      if (requested === null) {
+        flag("bad", "Refusing to record: no candidate format supported. This mirrors the " +
+                    "recorder's own refusal — it does not fall back to a browser default.");
+        return;
+      }
+      options = { mimeType: requested };            // passed unconditionally
+    } else {
+      requested = pickSpeakingMime(p.candidates);   // "" means none supported
+      options = requested ? { mimeType: requested } : {};
+    }
+
+    elState.textContent = "Asking for microphone permission…";
+    elStart.disabled = true;
+
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (s) {
+      stream = s;
+      chunks = [];
+      try {
+        recorder = new MediaRecorder(stream, options);
+      } catch (err) {
+        stopStream();
+        elState.textContent = "MediaRecorder could not be constructed.";
+        flag("bad", "MediaRecorder construction failed: " + (err && err.name ? err.name : "error"));
+        elStart.disabled = false;
+        return;
+      }
+
+      var track = stream.getAudioTracks()[0];
+      var ts = {};
+      try { ts = track && track.getSettings ? track.getSettings() : {}; } catch (e) {}
+
+      var fields = readDeviceFields();
+      current = {
+        device: fields.device,
+        osver: fields.osver,
+        browser: fields.browser,
+        profileKey: p.key,
+        profile: p.label,
+        timeslice: p.timeslice,
+        requestedMime: requested === null ? "(none — would refuse)" :
+                       (requested === "" ? "(none — no candidate supported; no mimeType passed)" : requested),
+        optionsPassed: JSON.stringify(options),
+        recorderMime: recorder.mimeType || "",
+        trackSampleRate: typeof ts.sampleRate === "number" ? ts.sampleRate : null,
+        trackChannelCount: typeof ts.channelCount === "number" ? ts.channelCount : null,
+        support: describeSupport(p.candidates),
+        startedAt: new Date().toISOString()
+      };
+
+      recorder.ondataavailable = function (e) {
+        if (e.data && e.data.size > 0) chunks.push(e.data);
+      };
+
+      recorder.onstop = function () {
+        // NO application callback is invoked here. In the application this is
+        // where a completion callback fires and drives upload and round
+        // completion; that call is deliberately absent.
+        var elapsedMs = tStart ? (Date.now() - tStart) : 0;
+        var fallback = (current.requestedMime.charAt(0) === "(") ? "" : current.requestedMime;
+        var mimeType = recorder.mimeType || fallback || "audio/webm";
+        blob = new Blob(chunks, { type: mimeType });
+        stopStream();
+        clearInterval(tick); tick = null;
+
+        current.recorderMimeAtStop = recorder.mimeType || "";
+        current.audioBitsPerSecondAtStop =
+          (typeof recorder.audioBitsPerSecond === "number") ? recorder.audioBitsPerSecond : null;
+        current.blobType = blob.type || "";
+        current.blobSize = blob.size;
+        current.chunkCount = chunks.length;
+        current.elapsedMs = elapsedMs;
+        current.elapsedSecExact = elapsedMs / 1000;
+        current.elapsedSecRounded = Math.round(elapsedMs / 1000);
+        current.endedAt = new Date().toISOString();
+
+        runs.push(current);
+        render(current);
+        buildReport();
+        $("applyLast").disabled = false;
+
+        elState.textContent = "Recorded " + fmt(Math.round(elapsedMs / 1000)) +
+                              " — " + current.blobSize.toLocaleString() + " bytes.";
+        elStop.disabled = true; elStart.disabled = false; elClear.disabled = false;
+      };
+
+      if (p.timeslice === null) recorder.start(); else recorder.start(p.timeslice);
+
+      tStart = Date.now();
+      elTimer.textContent = "00:00";
+      elState.textContent = "Recording. Speak normally for about three minutes.";
+      elStop.disabled = false;
+      tick = setInterval(function () {
+        elTimer.textContent = fmt(Math.floor((Date.now() - tStart) / 1000));
+      }, 200);
+
+    }).catch(function (err) {
+      elState.textContent = "Microphone not available.";
+      var n = err && err.name ? err.name : "error";
+      if (n === "NotAllowedError") flag("bad", "Permission denied. Allow microphone access for this page and try again.");
+      else if (n === "NotFoundError") flag("bad", "No microphone found on this device.");
+      else flag("bad", "getUserMedia failed: " + n);
+      elStart.disabled = false;
+    });
+  });
+
+  /* ── Stop ──────────────────────────────────────────────────────────────── */
+  elStop.addEventListener("click", function () {
+    elStop.disabled = true;
+    elState.textContent = "Finishing…";
+    try { recorder.stop(); } catch (e) {
+      elState.textContent = "Stop failed.";
+      flag("bad", "recorder.stop() threw: " + (e && e.name ? e.name : "error"));
+    }
+  });
+
+  function stopStream() {
+    if (!stream) return;
+    stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
+    stream = null;
+  }
+
+  /* ── Render ────────────────────────────────────────────────────────────── */
+  function render(m) {
+    elResults.innerHTML = "";
+    row("Profile", m.profile);
+
+    row("Blob.size (exact bytes)", m.blobSize.toLocaleString() + "  (" + m.blobSize + ")");
+    row("Blob.type", m.blobType || "(empty)");
+    row("Elapsed, measured", m.elapsedSecExact.toFixed(2) + " s  (" + m.elapsedMs + " ms)");
+    row("Elapsed, rounded to seconds", m.elapsedSecRounded + " s");
+
+    row("Requested MIME type", m.requestedMime);
+    row("Options passed to MediaRecorder", m.optionsPassed);
+    row("MediaRecorder.mimeType (at start)", m.recorderMime || "(empty)");
+    row("MediaRecorder.mimeType (at stop)", m.recorderMimeAtStop || "(empty)");
+
+    row("recorder.audioBitsPerSecond — a SETTING", m.audioBitsPerSecondAtStop === null
+        ? "not exposed by this browser"
+        : m.audioBitsPerSecondAtStop.toLocaleString() + " bit/s");
+    row("Track sample rate — a SETTING", m.trackSampleRate === null ? "not exposed" : m.trackSampleRate + " Hz");
+    row("Track channel count — a SETTING", m.trackChannelCount === null ? "not exposed" : m.trackChannelCount);
+
+    var bps = m.elapsedSecExact > 0 ? (m.blobSize / m.elapsedSecExact) : 0;
+    row("Measured rate", bps.toFixed(0) + " bytes/s  ≈ " + ((bps * 8) / 1000).toFixed(1) + " kbit/s", "derived");
+    row("Timeslice", m.timeslice === null ? "none — start()" : "start(" + m.timeslice + ")");
+    row("Chunks delivered", m.chunkCount);
+
+    if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; }
+    blobUrl = URL.createObjectURL(blob);
+    elPlayback.innerHTML = "";
+    var a = document.createElement("audio");
+    a.controls = true; a.src = blobUrl; a.preload = "metadata";
+    elPlayback.appendChild(a);
+    var note = document.createElement("p");
+    note.className = "note";
+    note.textContent = "Local playback from memory. Nothing is saved to the device or sent anywhere.";
+    elPlayback.appendChild(note);
+  }
+
+  /* ── Clear ─────────────────────────────────────────────────────────────── */
+  elClear.addEventListener("click", function () {
+    if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; }
+    blob = null; chunks = [];
+    elPlayback.innerHTML = "";
+    elClear.disabled = true;
+    elState.textContent = "Recording cleared from memory. Measurements kept in the run log.";
+  });
+
+  /* ── Report ────────────────────────────────────────────────────────────── */
+  function buildReport() {
+    elRunCount.textContent = runs.length + (runs.length === 1 ? " run" : " runs");
+    if (runs.length === 0) { elReport.value = ""; return; }
+    var L = [];
+    L.push("RECORDER MEASUREMENT");
+    L.push("Recording measurement only. Nothing was uploaded, downloaded or stored.");
+    L.push("Profiles transcribed from application source revision:");
+    L.push("  " + SOURCE_REVISION + "  (" + SOURCE_DATE + ")");
+    L.push("  They match that source revision. This is NOT independently verified");
+    L.push("  production behaviour.");
+    L.push("Generated: " + new Date().toISOString());
+    L.push("User agent (unreliable on iPadOS — the device fields below are authoritative):");
+    L.push("  " + navigator.userAgent);
+    L.push("");
+    for (var i = 0; i < runs.length; i++) {
+      var m = runs[i];
+      L.push("──────────────────────────────────────────────");
+      L.push("RUN " + (i + 1) + "   profile " + m.profileKey);
+      L.push("  " + m.profile);
+      L.push("──────────────────────────────────────────────");
+      L.push("Device model            : " + (m.device || "(not entered)"));
+      L.push("iPadOS / iOS version    : " + (m.osver || "(not entered)"));
+      L.push("Browser                 : " + (m.browser || "(not entered)"));
+      L.push("");
+      L.push("MEASURED");
+      L.push("  Exact bytes           : " + m.blobSize);
+      L.push("  Blob.type             : " + (m.blobType || "(empty)"));
+      L.push("  Duration, measured    : " + m.elapsedSecExact.toFixed(2) + " s (" + m.elapsedMs + " ms)");
+      L.push("  Duration, rounded     : " + m.elapsedSecRounded + " s");
+      L.push("  Chunks delivered      : " + m.chunkCount);
+      L.push("");
+      L.push("FORMAT NEGOTIATION");
+      L.push("  Requested MIME        : " + m.requestedMime);
+      L.push("  Options passed        : " + m.optionsPassed);
+      L.push("  MediaRecorder.mimeType at start : " + (m.recorderMime || "(empty)"));
+      L.push("  MediaRecorder.mimeType at stop  : " + (m.recorderMimeAtStop || "(empty)"));
+      L.push("  Timeslice             : " + (m.timeslice === null ? "none — start()" : "start(" + m.timeslice + ")"));
+      L.push("");
+      L.push("SETTINGS (declared by the browser — NOT the measured file size)");
+      L.push("  audioBitsPerSecond    : " + (m.audioBitsPerSecondAtStop === null ? "not exposed" : m.audioBitsPerSecondAtStop + " bit/s"));
+      L.push("  Track sample rate     : " + (m.trackSampleRate === null ? "not exposed" : m.trackSampleRate + " Hz"));
+      L.push("  Track channel count   : " + (m.trackChannelCount === null ? "not exposed" : m.trackChannelCount));
+      L.push("");
+      L.push("DERIVED FROM THE MEASUREMENT (not a setting)");
+      var b = m.elapsedSecExact > 0 ? m.blobSize / m.elapsedSecExact : 0;
+      L.push("  Rate                  : " + b.toFixed(0) + " bytes/s ≈ " + ((b * 8) / 1000).toFixed(1) + " kbit/s");
+      L.push("");
+      L.push("CANDIDATE SUPPORT (isTypeSupported, in source order)");
+      var sup = m.support.split("\n");
+      for (var j = 0; j < sup.length; j++) L.push("  " + sup[j]);
+      L.push("");
+    }
+    L.push("──────────────────────────────────────────────");
+    L.push("LIMITS");
+    L.push("  - Three minutes is this test's sample length, not a proposed limit.");
+    L.push("  - The Live Conversation profile matches that recorder's candidate order,");
+    L.push("    options, unsupported-format refusal and start() with no timeslice, but");
+    L.push("    NOT its audio source: it wraps a live room's already-published call");
+    L.push("    track, which this page cannot reproduce. A size measured here is");
+    L.push("    indicative of the settings, NOT equivalent to the live-room track, and");
+    L.push("    does not replace a real classroom test.");
+    L.push("  - Do not assume an iPad and an iPhone produce the same format or size.");
+    elReport.value = L.join("\n");
+  }
+
+  // Deliberate correction of the most recent run. Never automatic.
+  $("applyLast").addEventListener("click", function () {
+    if (!runs.length) return;
+    var f = readDeviceFields(), m = runs[runs.length - 1];
+    m.device = f.device; m.osver = f.osver; m.browser = f.browser;
+    buildReport();
+    elState.textContent = "Device details applied to run " + runs.length + " only.";
+  });
+
+  $("copy").addEventListener("click", function () {
+    var btn = this;
+    if (!elReport.value) { btn.textContent = "Nothing to copy"; setTimeout(function(){btn.textContent="Copy report";},1400); return; }
+    function done(ok) {
+      btn.textContent = ok ? "Copied" : "Select the text above and copy";
+      setTimeout(function () { btn.textContent = "Copy report"; }, 1800);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(elReport.value).then(function(){done(true);}, function(){ fallback(); });
+    } else fallback();
+    function fallback() {
+      elReport.removeAttribute("readonly");
+      elReport.focus(); elReport.setSelectionRange(0, elReport.value.length);
+      var ok = false;
+      try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+      elReport.setAttribute("readonly", "readonly");
+      done(ok);
+    }
+  });
+
+  $("resetLog").addEventListener("click", function () {
+    runs.length = 0; buildReport();
+    $("applyLast").disabled = true;
+    elResults.innerHTML = ""; row("Status", "no recording yet");
+    elState.textContent = "Run log cleared.";
+  });
+
+  refreshProfile();
+  buildReport();
+})();
+</script>
+</body>
+</html>
