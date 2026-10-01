@@ -385,12 +385,15 @@ use the stored MIME type "would turn a silent failure into an honest message".
 **That was wrong, and these fields show why:** `canPlayType` returned `probably`
 for the inaudible files. A capability check gated on it would have passed and
 displayed nothing. P1 and P3 below remain worth doing for other reasons, but
-neither would have surfaced *this* failure.
+neither would have surfaced *this* failure through the fields that were
+recorded.
 
-So the failure is silent at **every** programmatic surface the application can
-read. There is no error, no state, and no capability answer that distinguishes
-an inaudible recording from a working one. No further information is needed from
-the operator on this point.
+So, more precisely than an earlier draft put it: **the recorded playback status
+and capability fields did not distinguish the audible and inaudible runs.** The
+five fields above were identical across all three. That is a statement about
+those fields, not about every surface the application could ever read — other
+signals were not instrumented and may exist. No further information is needed
+from the operator on this point.
 
 ## 9 · Application paths — source findings
 
@@ -439,8 +442,9 @@ expired, and then reported as a generic load failure.
 advanced, which is consistent with the element not firing `error` at all. If it
 does not error, `onError` never runs, no retry happens, no message appears — a
 teacher sees a normal-looking player producing silence, with nothing anywhere
-indicating a problem. §8.3's unread fields would settle which of the two is
-happening.
+indicating a problem. §8.3 settles which of the two occurred: `element.error` was
+`none` on both inaudible runs, so the element did **not** error and the error
+path never ran. The teacher-facing case is the silent one.
 
 ## 10 · Candidate mitigation — AAC first
 
